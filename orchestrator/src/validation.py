@@ -20,6 +20,7 @@ async def cross_validate_claims(
     fetch_fn,
     synthesis_client: LLMClient,
     max_concurrent_verifications: int = 3,
+    verification_fetch_count: int = 3,
 ) -> list[Claim]:
     """Three-pass cross-validation of claims.
 
@@ -44,7 +45,7 @@ async def cross_validate_claims(
 
     async def _verify_one(claim: Claim) -> None:
         async with sem:
-            await _verify_claim(claim, search_fn, fetch_fn, synthesis_client)
+            await _verify_claim(claim, search_fn, fetch_fn, synthesis_client, verification_fetch_count)
 
     await asyncio.gather(*[_verify_one(c) for c in needs_verification], return_exceptions=True)
 
@@ -63,6 +64,7 @@ async def _verify_claim(
     search_fn,
     fetch_fn,
     client: LLMClient,
+    fetch_count: int = 3,
 ) -> None:
     """Verify a single claim via independent search + LLM comparison."""
     if not claim.verification_query:
@@ -82,7 +84,7 @@ async def _verify_claim(
         return
 
     # Fetch top results
-    urls = [h.url for h in hits[:3]]
+    urls = [h.url for h in hits[:fetch_count]]
     try:
         fetched: list[FetchedContent] = await fetch_fn(urls)
     except Exception as e:

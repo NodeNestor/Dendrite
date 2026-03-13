@@ -50,14 +50,28 @@ class Settings(BaseSettings):
     searxng_url: str = "http://searxng:8080"
     hivemind_url: str = "http://hiveminddb:8100"
 
-    # Research defaults
-    max_depth: int = 4
-    max_branch_iterations: int = 5
-    max_concurrent_fetches: int = 50
-    max_concurrent_llm: int = 100
-    queries_per_iteration: int = 4
-    verification_threshold: float = 0.6
-    min_independent_sources: int = 2
+    # Research — tree structure
+    max_depth: int = 4                       # max levels deep the tree can grow
+    max_branch_iterations: int = 5           # search iterations per branch
+    verification_iterations: int = 2         # iterations for verification/counter branches
+    queries_per_iteration: int = 4           # search queries generated per iteration
+
+    # Research — search width
+    urls_per_iteration: int = 20             # max URLs fetched per branch iteration
+    results_per_provider: int = 10           # max search results per provider per query
+    max_concurrent_fetches: int = 50         # parallel page downloads
+    max_concurrent_llm: int = 100            # parallel LLM calls
+
+    # Research — verification depth
+    verification_threshold: float = 0.6      # confidence below this triggers verification
+    min_independent_sources: int = 2         # sources needed for auto-verify
+    max_concurrent_verifications: int = 3    # parallel cross-validations
+    verification_fetch_count: int = 3        # pages fetched per verification check
+
+    # Research — convergence
+    min_convergence_iterations: int = 2      # minimum iterations before convergence allowed
+    diminishing_returns_threshold: float = 0.10  # new/total claims ratio to stop
+    coverage_target: float = 0.85            # LLM coverage score to stop
 
     # Optional API keys
     github_token: str = ""
@@ -94,8 +108,15 @@ _RUNTIME_FIELDS = {
     "synthesis_provider", "synthesis_model", "synthesis_api_url", "synthesis_api_key",
     "synthesis_max_tokens",
     "hivemind_url", "searxng_url",
-    "max_depth", "max_branch_iterations", "max_concurrent_llm",
+    # Tree structure
+    "max_depth", "max_branch_iterations", "verification_iterations", "queries_per_iteration",
+    # Search width
+    "urls_per_iteration", "results_per_provider", "max_concurrent_fetches", "max_concurrent_llm",
+    # Verification depth
     "verification_threshold", "min_independent_sources",
+    "max_concurrent_verifications", "verification_fetch_count",
+    # Convergence
+    "min_convergence_iterations", "diminishing_returns_threshold", "coverage_target",
 }
 
 

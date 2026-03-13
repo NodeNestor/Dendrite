@@ -12,10 +12,6 @@ from .models import Branch
 
 log = logging.getLogger(__name__)
 
-MIN_ITERATIONS = 2
-DIMINISHING_RETURNS_THRESHOLD = 0.10
-
-
 @dataclass
 class ConvergenceResult:
     converged: bool
@@ -29,6 +25,9 @@ async def check_convergence(
     new_claims_this_iteration: int,
     max_iterations: int = 5,
     client: LLMClient | None = None,
+    min_iterations: int = 2,
+    diminishing_returns_threshold: float = 0.10,
+    coverage_target: float = 0.85,
 ) -> ConvergenceResult:
     """Decide whether a branch should continue or stop.
 
@@ -43,10 +42,10 @@ async def check_convergence(
         )
 
     # Min iterations
-    if branch.iteration < MIN_ITERATIONS:
+    if branch.iteration < min_iterations:
         return ConvergenceResult(
             converged=False,
-            reason=f"Below minimum iterations ({MIN_ITERATIONS})",
+            reason=f"Below minimum iterations ({min_iterations})",
         )
 
     # No claims at all
@@ -68,7 +67,7 @@ async def check_convergence(
     total = len(branch.claims)
     if total > 0 and new_claims_this_iteration > 0:
         ratio = new_claims_this_iteration / total
-        if ratio < DIMINISHING_RETURNS_THRESHOLD:
+        if ratio < diminishing_returns_threshold:
             return ConvergenceResult(
                 converged=True,
                 reason=f"Diminishing returns: {new_claims_this_iteration} new / {total} total ({ratio:.0%})",
@@ -95,7 +94,7 @@ async def check_convergence(
                 should_continue = parsed.get("should_continue", True)
                 gaps = parsed.get("gaps", [])
 
-                if not should_continue or coverage >= 0.85:
+                if not should_continue or coverage >= coverage_target:
                     return ConvergenceResult(
                         converged=True,
                         reason=f"LLM assessment: coverage={coverage:.0%}",

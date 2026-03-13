@@ -164,6 +164,8 @@ async def run_investigation(
                 search_fn=_search,
                 fetch_fn=_fetch,
                 synthesis_client=synthesis_client,
+                max_concurrent_verifications=settings.max_concurrent_verifications,
+                verification_fetch_count=settings.verification_fetch_count,
             )
 
         # Auto-verify claims with multiple independent sources
@@ -283,7 +285,7 @@ async def _run_branch(
         branch.queries_used.extend(queries)
 
         # 2. Search all providers
-        search_results = await search_all(queries)
+        search_results = await search_all(queries, max_per_provider=settings.results_per_provider)
         new_results = [r for r in search_results if r.url not in visited_urls]
 
         if not new_results:
@@ -293,8 +295,8 @@ async def _run_branch(
         branch.urls_searched += len(new_results)
 
         # 3. Fetch content
-        urls_to_fetch = [r.url for r in new_results[:20]]  # cap per iteration
-        fetched = await fetch_all(urls_to_fetch)
+        urls_to_fetch = [r.url for r in new_results[:settings.urls_per_iteration]]
+        fetched = await fetch_all(urls_to_fetch, max_concurrent=settings.max_concurrent_fetches)
         visited_urls.update(f.url for f in fetched)
         good_pages = [f for f in fetched if f.text and not f.error]
         branch.pages_fetched += len(good_pages)
@@ -426,7 +428,7 @@ async def _run_branch(
                         parent_branch_id=branch.id,
                         parent_claim_id=claim.id,
                         depth=branch.depth + 1,
-                        max_iterations=2,  # verification branches are short
+                        max_iterations=settings.verification_iterations,
                     )
                     tree.add_branch(child)
                     child_branches.append(child)
@@ -475,7 +477,7 @@ async def _run_branch(
                         parent_branch_id=branch.id,
                         parent_claim_id=claim.id,
                         depth=branch.depth + 1,
-                        max_iterations=2,
+                        max_iterations=settings.verification_iterations,
                     )
                     tree.add_branch(child)
                     child_branches.append(child)
@@ -499,6 +501,9 @@ async def _run_branch(
             new_claims_this_iteration=new_claims_count,
             max_iterations=branch.max_iterations,
             client=bulk_client if iteration >= 1 else None,
+            min_iterations=settings.min_convergence_iterations,
+            diminishing_returns_threshold=settings.diminishing_returns_threshold,
+            coverage_target=settings.coverage_target,
         )
 
         log.info(

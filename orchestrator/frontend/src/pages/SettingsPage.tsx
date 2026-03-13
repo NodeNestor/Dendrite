@@ -41,8 +41,20 @@ export default function SettingsPage() {
       fields: ['searxng_url', 'hivemind_url'],
     },
     {
-      title: 'Research',
-      fields: ['max_depth', 'max_branch_iterations', 'max_concurrent_llm', 'verification_threshold', 'min_independent_sources'],
+      title: 'Tree Structure',
+      fields: ['max_depth', 'max_branch_iterations', 'verification_iterations', 'queries_per_iteration'],
+    },
+    {
+      title: 'Search Width',
+      fields: ['urls_per_iteration', 'results_per_provider', 'max_concurrent_fetches', 'max_concurrent_llm'],
+    },
+    {
+      title: 'Verification',
+      fields: ['verification_threshold', 'min_independent_sources', 'max_concurrent_verifications', 'verification_fetch_count'],
+    },
+    {
+      title: 'Convergence',
+      fields: ['min_convergence_iterations', 'diminishing_returns_threshold', 'coverage_target'],
     },
   ]
 
