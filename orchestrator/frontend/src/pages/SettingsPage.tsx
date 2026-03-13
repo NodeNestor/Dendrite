@@ -59,7 +59,7 @@ export default function SettingsPage() {
   ]
 
   return (
-    <div className="p-6 max-w-2xl">
+    <div className="p-6 max-w-2xl mx-auto">
       <h2 className="text-xl font-semibold mb-6">Settings</h2>
       <div className="space-y-6">
         {groups.map(group => (
