@@ -59,7 +59,8 @@ export default function SettingsPage() {
   ]
 
   return (
-    <div className="p-6 max-w-2xl mx-auto">
+    <div className="h-full overflow-y-auto p-6 flex flex-col items-center">
+    <div className="w-full max-w-3xl">
       <h2 className="text-xl font-semibold mb-6">Settings</h2>
       <div className="space-y-6">
         {groups.map(group => (
@@ -92,6 +93,7 @@ export default function SettingsPage() {
       >
         {saving ? 'Saving...' : 'Save'}
       </button>
+    </div>
     </div>
   )
 }
