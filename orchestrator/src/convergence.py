@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 from .llm.client import LLMClient
 from .llm.prompts import CONVERGENCE_SYSTEM, convergence_prompt
-from .models import Branch, Claim
+from .models import Branch
 
 log = logging.getLogger(__name__)
 

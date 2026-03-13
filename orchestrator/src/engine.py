@@ -33,8 +33,7 @@ from .models import (
     Branch, BranchType, Claim, ClaimStatus, Evidence,
     ProgressEvent, ResearchTree, TreeStatus,
 )
-from .providers import all_providers, fetch_all, search_all
-from .providers.base import FetchedContent, SearchHit
+from .providers import fetch_all, search_all
 from .validation import cross_validate_claims
 
 log = logging.getLogger(__name__)

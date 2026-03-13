@@ -7,11 +7,7 @@ import json
 import logging
 
 from .llm.client import LLMClient
-from .llm.batch import batch_complete
-from .llm.prompts import (
-    VALIDATION_SYSTEM, validation_prompt,
-    SOURCE_INDEPENDENCE_SYSTEM, source_independence_prompt,
-)
+from .llm.prompts import VALIDATION_SYSTEM, validation_prompt
 from .models import Claim, ClaimStatus, Evidence
 from .providers.base import FetchedContent, SearchHit
 

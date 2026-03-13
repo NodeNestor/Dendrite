@@ -29,14 +29,14 @@ class Settings(BaseSettings):
 
     # Bulk model (extraction / triage)
     bulk_provider: str = "vllm"
-    bulk_model: str = "Qwen/Qwen3.5-0.8B-GPTQ-Int4"
+    bulk_model: str = "Qwen/Qwen3.5-0.8B"
     bulk_api_url: str = "http://vllm:8000/v1"
     bulk_api_key: str = ""
     bulk_max_tokens: int = 16384
 
     # Synthesis model (cross-validation / report)
     synthesis_provider: str = "vllm"
-    synthesis_model: str = "Qwen/Qwen3.5-9B-GPTQ-Int4"
+    synthesis_model: str = "Qwen/Qwen3.5-0.8B"
     synthesis_api_url: str = "http://vllm:8000/v1"
     synthesis_api_key: str = ""
     synthesis_max_tokens: int = 32768
