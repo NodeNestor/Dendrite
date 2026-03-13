@@ -2,26 +2,15 @@
 
 Recursive branching truth engine. Builds research **trees**, not flat lists — each claim gets independently verified, each sub-topic gets its own branch, contradictions get investigated from both sides. The tree grows until convergence.
 
+![Research Tree](docs/research-tree.png)
+
 ## How It Works
 
-```
-"Is fusion power viable by 2035?"
-├── Branch: Current state of fusion research
-│   ├── Claim: "ITER expected first plasma 2025" [VERIFIED, 4 sources]
-│   ├── Claim: "NIF achieved ignition Dec 2022" [VERIFIED, 7 sources]
-│   └── Claim: "Commonwealth Fusion targets 2030s" [VERIFY →]
-│       ├── Verification: Search Commonwealth Fusion announcements
-│       └── Verification: Search independent energy analysis
-├── Branch: Engineering challenges remaining
-│   ├── Claim: "Tritium supply is bottleneck" [CONTESTED]
-│   │   ├── Counter-branch: Evidence FOR tritium shortage
-│   │   └── Counter-branch: Evidence AGAINST (breeding blankets)
-│   └── ...
-└── Branch: Economic feasibility
-    └── Deepening: "What is the $/MWh projection?"
-```
-
 Each iteration: generate queries → search all providers → fetch → extract claims → triage (ACCEPT/VERIFY/DEEPEN/COUNTER) → check convergence → recurse into child branches. After all branches converge: cross-validate pending claims, synthesize final report.
+
+| | |
+|---|---|
+| ![Branch Detail](docs/branch-detail.png) | ![Settings](docs/settings.png) |
 
 ## Architecture
 
@@ -60,6 +49,17 @@ curl -X POST http://localhost:8082/api/research \
   -d '{"question": "Is fusion power viable by 2035?"}'
 ```
 
+## Configuration
+
+All research parameters are configurable via `.env`, the API (`PUT /api/config`), or the web UI:
+
+| Group | Parameters |
+|-------|-----------|
+| **Tree Structure** | `max_depth`, `max_branch_iterations`, `verification_iterations`, `queries_per_iteration` |
+| **Search Width** | `urls_per_iteration`, `results_per_provider`, `max_concurrent_fetches`, `max_concurrent_llm` |
+| **Verification** | `verification_threshold`, `min_independent_sources`, `max_concurrent_verifications`, `verification_fetch_count` |
+| **Convergence** | `min_convergence_iterations`, `diminishing_returns_threshold`, `coverage_target` |
+
 ## MCP Integration
 
 Dendrite exposes 7 MCP tools for use with Claude Code or any MCP client:
@@ -83,7 +83,7 @@ python -m orchestrator.src.main mcp
 
 - **Branch types**: investigation (main), verification (independent check), deepening (sub-question), counter (opposing evidence)
 - **Claim statuses**: pending → verified / refuted / contested / accepted
-- **Convergence**: min iterations, diminishing returns (<10%), zero new claims, LLM coverage ≥85%
+- **Convergence**: min iterations, diminishing returns, zero new claims, LLM coverage target
 - **Cross-validation**: 3-pass — rate claims → independent search → source independence check
 - **Providers**: Modular ABC — plug in web, academic, local files, or any data source
 

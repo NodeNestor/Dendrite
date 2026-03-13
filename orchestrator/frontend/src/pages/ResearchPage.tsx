@@ -12,7 +12,12 @@ interface ProgressEvent {
   timestamp: string
 }
 
-export default function ResearchPage() {
+interface ResearchPageProps {
+  loadTreeId?: string | null
+  onLoaded?: () => void
+}
+
+export default function ResearchPage({ loadTreeId, onLoaded }: ResearchPageProps) {
   const [question, setQuestion] = useState('')
   const [treeId, setTreeId] = useState<string | null>(null)
   const [treeData, setTreeData] = useState<any>(null)
@@ -21,6 +26,27 @@ export default function ResearchPage() {
   const [loading, setLoading] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const pollRef = useRef<number | null>(null)
+
+  // Load a tree by ID (from history page)
+  useEffect(() => {
+    if (!loadTreeId) return
+    const loadTree = async () => {
+      try {
+        const r = await fetch(`/api/tree/${loadTreeId}`)
+        const tree = await r.json()
+        if (!tree.error) {
+          setTreeData(tree)
+          setTreeId(loadTreeId)
+          setQuestion(tree.question || '')
+          setEvents([])
+          setSelectedBranch(null)
+          setLoading(false)
+        }
+      } catch {}
+      onLoaded?.()
+    }
+    loadTree()
+  }, [loadTreeId, onLoaded])
 
   const startResearch = async () => {
     if (!question.trim()) return

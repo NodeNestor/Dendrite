@@ -7,6 +7,12 @@ type Page = 'research' | 'history' | 'settings'
 
 export default function App() {
   const [page, setPage] = useState<Page>('research')
+  const [loadTreeId, setLoadTreeId] = useState<string | null>(null)
+
+  const openTree = (treeId: string) => {
+    setLoadTreeId(treeId)
+    setPage('research')
+  }
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex">
@@ -28,8 +34,8 @@ export default function App() {
 
       {/* Main content */}
       <main className="flex-1 overflow-hidden">
-        {page === 'research' && <ResearchPage />}
-        {page === 'history' && <HistoryPage />}
+        {page === 'research' && <ResearchPage loadTreeId={loadTreeId} onLoaded={() => setLoadTreeId(null)} />}
+        {page === 'history' && <HistoryPage onOpenTree={openTree} />}
         {page === 'settings' && <SettingsPage />}
       </main>
     </div>

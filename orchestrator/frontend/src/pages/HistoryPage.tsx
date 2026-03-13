@@ -10,7 +10,11 @@ interface TreeSummary {
   finished_at: string | null
 }
 
-export default function HistoryPage() {
+interface HistoryPageProps {
+  onOpenTree?: (treeId: string) => void
+}
+
+export default function HistoryPage({ onOpenTree }: HistoryPageProps) {
   const [trees, setTrees] = useState<TreeSummary[]>([])
 
   useEffect(() => {
@@ -30,7 +34,8 @@ export default function HistoryPage() {
           {trees.map(tree => (
             <div
               key={tree.id}
-              className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 hover:border-zinc-700 transition-colors"
+              onClick={() => onOpenTree?.(tree.id)}
+              className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 hover:border-zinc-700 transition-colors cursor-pointer"
             >
               <div className="flex justify-between items-start">
                 <div>
