@@ -2,7 +2,7 @@
 
 Recursive branching truth engine. Builds research **trees**, not flat lists — each claim gets independently verified, each sub-topic gets its own branch, contradictions get investigated from both sides. The tree grows until convergence.
 
-![Research Tree](docs/research-tree.png)
+![Research Tree](docs/branch-detail.png)
 
 ## How It Works
 
@@ -10,7 +10,7 @@ Each iteration: generate queries → search all providers → fetch → extract 
 
 | | |
 |---|---|
-| ![Branch Detail](docs/branch-detail.png) | ![Settings](docs/settings.png) |
+| ![History](docs/history.png) | ![Settings](docs/settings.png) |
 
 ## Architecture
 
