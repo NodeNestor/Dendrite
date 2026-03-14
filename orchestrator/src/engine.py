@@ -11,7 +11,10 @@ Architecture:
        e. Check convergence
     3. Process child branches recursively (depth-limited)
     4. Cross-validate important claims
-    5. Synthesize final report
+    5. Resolve contradictions
+    6. Synthesize final report
+    7. Self-critique and refine (multi-turn)
+    8. Store verified claims to HiveMindDB (feedback loop)
 """
 
 from __future__ import annotations
@@ -27,13 +30,17 @@ from .llm.client import LLMClient
 from .llm.batch import batch_complete
 from .llm.prompts import (
     EXTRACTION_SYSTEM, QUERY_GENERATION_SYSTEM, SYNTHESIS_SYSTEM, TRIAGE_SYSTEM,
+    RESOLUTION_SYSTEM, REFINEMENT_SYSTEM,
     extraction_prompt, query_generation_prompt, synthesis_prompt, triage_prompt,
+    resolution_prompt, refinement_prompt,
 )
 from .models import (
     Branch, BranchType, Claim, ClaimStatus, Evidence,
     ProgressEvent, ResearchTree, TreeStatus,
 )
 from .providers import fetch_all, search_all
+from .semantic_dedup import SemanticDeduplicator
+from .source_quality import score_source
 from .validation import cross_validate_claims
 
 log = logging.getLogger(__name__)
@@ -127,6 +134,9 @@ async def run_investigation(
             message=f"Starting investigation: {question}",
         ))
 
+        # Initialize semantic deduplicator
+        dedup = SemanticDeduplicator(threshold=settings.semantic_dedup_threshold)
+
         # Run the root branch (which recursively spawns child branches)
         await _run_branch(
             tree=tree,
@@ -137,6 +147,7 @@ async def run_investigation(
             progress=progress,
             visited_urls=set(),
             seen_claims=set(),
+            dedup=dedup,
         )
 
         # Cross-validate all pending claims
@@ -174,8 +185,21 @@ async def run_investigation(
                 if claim.independent_sources >= settings.min_independent_sources:
                     claim.status = ClaimStatus.VERIFIED
                     claim.confidence = min(0.8 + 0.05 * claim.independent_sources, 1.0)
+                    claim.status_history.append(f"auto-verified: {claim.independent_sources} independent sources")
+                    claim.updated_at = _now()
 
-        # Synthesize final report
+        # ── Contradiction Resolution ──────────────────────────────────
+        if settings.enable_contradiction_resolution:
+            await _emit(progress, ProgressEvent(
+                tree_id=tree.id,
+                event_type="resolution_started",
+                message="Resolving contradictions...",
+            ))
+            await _resolve_contradictions(
+                tree, all_claims, synthesis_client, settings, progress,
+            )
+
+        # ── Synthesize final report ───────────────────────────────────
         await _emit(progress, ProgressEvent(
             tree_id=tree.id,
             event_type="synthesis_started",
@@ -185,6 +209,17 @@ async def run_investigation(
         tree.synthesis = await _synthesize(
             tree, question, synthesis_client, settings,
         )
+
+        # ── Multi-Turn Refinement ─────────────────────────────────────
+        if settings.enable_refinement and settings.max_refinement_passes > 0:
+            await _refine(
+                tree, question, settings, bulk_client, synthesis_client,
+                progress, dedup,
+            )
+
+        # ── HiveMindDB Feedback Loop ─────────────────────────────────
+        if settings.enable_hivemind_feedback:
+            await _store_to_hivemind(tree, settings, progress)
 
         tree.status = TreeStatus.CONVERGED
         tree.finished_at = _now()
@@ -240,6 +275,7 @@ async def _run_branch(
     progress: ProgressCallback,
     visited_urls: set[str],
     seen_claims: set[str],
+    dedup: SemanticDeduplicator,
 ) -> None:
     """Run a single branch through search-extract-triage iterations."""
 
@@ -257,7 +293,7 @@ async def _run_branch(
         branch.iteration = iteration + 1
         claims_before = len(branch.claims)
 
-        # 1. Generate search queries
+        # 1. Generate search queries (improved strategy per iteration)
         existing_claims_text = "\n".join(
             f"- [{c.status.value}] {c.content}" for c in branch.claims
         ) if branch.claims else ""
@@ -294,7 +330,7 @@ async def _run_branch(
 
         branch.urls_searched += len(new_results)
 
-        # 3. Fetch content
+        # 3. Fetch content (with caching via provider registry)
         urls_to_fetch = [r.url for r in new_results[:settings.urls_per_iteration]]
         fetched = await fetch_all(urls_to_fetch, max_concurrent=settings.max_concurrent_fetches)
         visited_urls.update(f.url for f in fetched)
@@ -323,7 +359,7 @@ async def _run_branch(
         tree.llm_completion_tokens += extraction_batch.total_completion_tokens
         tree.llm_requests += extraction_batch.successful + extraction_batch.failed
 
-        # Parse extractions and build claims
+        # Parse extractions and build claims with source quality scoring
         new_claims: list[Claim] = []
         for page, response in zip(good_pages, extraction_batch.texts):
             if not response:
@@ -341,17 +377,46 @@ async def _run_branch(
             if quality < 3:
                 continue
 
+            # Score the source
+            sq = score_source(
+                url=page.url,
+                source_date=page.source_date,
+                provider=page.provider,
+                recency_weight=settings.recency_weight,
+            )
+
             for c in parsed.get("claims", []):
                 if not isinstance(c, dict):
                     continue
                 claim_text = c.get("claim", "")
-                if not claim_text or _is_duplicate(claim_text, seen_claims):
+                if not claim_text:
+                    continue
+
+                # String-based dedup (fast)
+                if _is_duplicate(claim_text, seen_claims):
+                    continue
+
+                # Semantic dedup (TF-IDF cosine)
+                dedup_result = dedup.add_claim(claim_text)
+                if dedup_result.is_duplicate:
+                    log.debug(
+                        "Semantic duplicate (%.2f): %s ~= %s",
+                        dedup_result.similarity, claim_text[:60], dedup_result.matched_claim[:60] if dedup_result.matched_claim else "",
+                    )
                     continue
 
                 seen_claims.add(_normalize(claim_text))
+
+                # Adjust confidence based on source quality
+                raw_confidence = float(c.get("confidence", 0.5))
+                adjusted_confidence = (
+                    raw_confidence * (1 - settings.source_quality_weight)
+                    + sq.overall * settings.source_quality_weight
+                )
+
                 claim = Claim(
                     content=claim_text,
-                    confidence=float(c.get("confidence", 0.5)),
+                    confidence=adjusted_confidence,
                     source_urls=[page.url],
                     evidence_for=[Evidence(
                         content=claim_text,
@@ -359,7 +424,10 @@ async def _run_branch(
                         source_title=page.title,
                         provider=page.provider,
                         source_date=page.source_date,
-                        confidence=float(c.get("confidence", 0.5)),
+                        confidence=adjusted_confidence,
+                        source_quality=sq.overall,
+                        source_type=sq.source_type,
+                        source_authority=sq.authority,
                     )],
                 )
                 new_claims.append(claim)
@@ -414,10 +482,12 @@ async def _run_branch(
             if action == "ACCEPT":
                 claim.status = ClaimStatus.ACCEPTED
                 claim.confidence = max(claim.confidence, 0.7)
+                claim.status_history.append("triaged: ACCEPT")
                 branch.claims.append(claim)
 
             elif action == "VERIFY":
                 claim.verification_query = decision.get("query", "")
+                claim.status_history.append(f"triaged: VERIFY (query={claim.verification_query})")
                 branch.claims.append(claim)
 
                 # Spawn verification branch if we have depth budget
@@ -444,6 +514,7 @@ async def _run_branch(
             elif action == "DEEPEN":
                 claim.status = ClaimStatus.ACCEPTED
                 claim.deepening_question = decision.get("sub_question", "")
+                claim.status_history.append(f"triaged: DEEPEN (q={claim.deepening_question})")
                 branch.claims.append(claim)
 
                 if branch.depth + 1 < tree.max_depth and claim.deepening_question:
@@ -467,6 +538,7 @@ async def _run_branch(
                     ))
 
             elif action == "COUNTER":
+                claim.status_history.append("triaged: COUNTER")
                 branch.claims.append(claim)
                 counter_query = decision.get("query", "")
 
@@ -531,13 +603,15 @@ async def _run_branch(
     if child_branches:
         log.info("Processing %d child branches for branch %s", len(child_branches), branch.id)
         for child in child_branches:
-            # Verification and counter branches need their own seen_claims
+            # Verification, counter, and resolution branches need their own seen_claims
             # so they can independently find the same claim from different sources
             # (finding it again = confirmation, not a duplicate)
-            if child.branch_type in (BranchType.VERIFICATION, BranchType.COUNTER):
+            if child.branch_type in (BranchType.VERIFICATION, BranchType.COUNTER, BranchType.RESOLUTION):
                 child_seen = set()  # fresh set — independent search
+                child_dedup = SemanticDeduplicator(threshold=settings.semantic_dedup_threshold)
             else:
                 child_seen = seen_claims  # deepening shares parent dedup
+                child_dedup = dedup
 
             await _run_branch(
                 tree=tree,
@@ -548,6 +622,7 @@ async def _run_branch(
                 progress=progress,
                 visited_urls=visited_urls,
                 seen_claims=child_seen,
+                dedup=child_dedup,
             )
 
             # If this was a verification branch, update the parent claim
@@ -563,6 +638,7 @@ async def _run_branch(
                     supporting = sum(1 for c in child.claims if c.status in (ClaimStatus.ACCEPTED, ClaimStatus.VERIFIED))
                     contradicting = sum(1 for c in child.claims if c.status == ClaimStatus.REFUTED)
 
+                    old_status = parent_claim.status
                     if supporting > contradicting:
                         parent_claim.status = ClaimStatus.VERIFIED
                         parent_claim.confidence = min(0.8 + 0.05 * supporting, 1.0)
@@ -571,6 +647,12 @@ async def _run_branch(
                         parent_claim.confidence = 0.2
                     else:
                         parent_claim.status = ClaimStatus.CONTESTED
+
+                    parent_claim.updated_at = _now()
+                    parent_claim.status_history.append(
+                        f"verification: {old_status.value} -> {parent_claim.status.value} "
+                        f"(+{supporting}/-{contradicting})"
+                    )
 
             # Counter branches: mark original claim as contested if counter-evidence found
             if child.branch_type == BranchType.COUNTER and child.parent_claim_id:
@@ -582,6 +664,8 @@ async def _run_branch(
 
                 if parent_claim and child.claims:
                     parent_claim.status = ClaimStatus.CONTESTED
+                    parent_claim.updated_at = _now()
+                    parent_claim.status_history.append("counter-evidence found")
                     for counter_claim in child.claims:
                         parent_claim.evidence_against.append(Evidence(
                             content=counter_claim.content,
@@ -590,6 +674,267 @@ async def _run_branch(
                             supports_claim=False,
                             confidence=counter_claim.confidence,
                         ))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Contradiction Resolution
+# ══════════════════════════════════════════════════════════════════════
+
+async def _resolve_contradictions(
+    tree: ResearchTree,
+    all_claims: list[Claim],
+    client: LLMClient,
+    settings: Settings,
+    progress: ProgressCallback,
+) -> None:
+    """Find contested claims and attempt to resolve contradictions."""
+    contested = [c for c in all_claims if c.status == ClaimStatus.CONTESTED]
+    if not contested:
+        return
+
+    log.info("Resolving %d contested claims", len(contested))
+
+    for claim in contested:
+        if not claim.evidence_against:
+            continue
+
+        # Build evidence summaries
+        evidence_for_text = "\n".join(
+            f"- {e.content} (source: {e.source_url}, quality: {e.source_quality:.2f})"
+            for e in claim.evidence_for[:5]
+        )
+        sources_for = ", ".join(e.source_url for e in claim.evidence_for[:3])
+
+        evidence_against_text = "\n".join(
+            f"- {e.content} (source: {e.source_url}, quality: {e.source_quality:.2f})"
+            for e in claim.evidence_against[:5]
+        )
+        sources_against = ", ".join(e.source_url for e in claim.evidence_against[:3])
+
+        # Get the main counter-claim text
+        counter_claim_text = claim.evidence_against[0].content if claim.evidence_against else "Unknown counter-evidence"
+
+        try:
+            result = await client.complete(
+                messages=[
+                    {"role": "system", "content": RESOLUTION_SYSTEM},
+                    {"role": "user", "content": resolution_prompt(
+                        claim_a=claim.content,
+                        evidence_a=evidence_for_text,
+                        sources_a=sources_for,
+                        claim_b=counter_claim_text,
+                        evidence_b=evidence_against_text,
+                        sources_b=sources_against,
+                        research_question=tree.question,
+                    )},
+                ],
+                max_tokens=2048,
+                thinking=False,
+                temperature=0.2,
+            )
+            tree.llm_prompt_tokens += result.prompt_tokens
+            tree.llm_completion_tokens += result.completion_tokens
+            tree.llm_requests += 1
+
+            parsed = _parse_json(result.text)
+            if not isinstance(parsed, dict):
+                continue
+
+            verdict = parsed.get("verdict", "UNRESOLVABLE").upper()
+            confidence = float(parsed.get("confidence", 0.5))
+            resolution_text = parsed.get("resolution", "")
+
+            if verdict == "A_STRONGER":
+                claim.status = ClaimStatus.VERIFIED
+                claim.confidence = confidence
+                claim.status_history.append(f"resolution: A_STRONGER — {resolution_text[:100]}")
+            elif verdict == "B_STRONGER":
+                claim.status = ClaimStatus.REFUTED
+                claim.confidence = 1.0 - confidence
+                claim.status_history.append(f"resolution: B_STRONGER — {resolution_text[:100]}")
+            elif verdict == "BOTH_PARTIAL":
+                claim.status = ClaimStatus.CONTESTED
+                claim.confidence = 0.5
+                claim.status_history.append(f"resolution: BOTH_PARTIAL — {resolution_text[:100]}")
+            # UNRESOLVABLE: leave as contested
+
+            claim.updated_at = _now()
+
+            await _emit(progress, ProgressEvent(
+                tree_id=tree.id,
+                event_type="contradiction_resolved",
+                message=f"Resolved: {claim.content[:60]}... → {verdict}",
+                data={"verdict": verdict, "confidence": confidence},
+            ))
+
+        except Exception as e:
+            log.warning("Resolution failed for claim: %s", e)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Multi-Turn Refinement
+# ══════════════════════════════════════════════════════════════════════
+
+async def _refine(
+    tree: ResearchTree,
+    question: str,
+    settings: Settings,
+    bulk_client: LLMClient,
+    synthesis_client: LLMClient,
+    progress: ProgressCallback,
+    dedup: SemanticDeduplicator,
+) -> None:
+    """Self-critique synthesis and do targeted follow-up research."""
+    for pass_num in range(settings.max_refinement_passes):
+        tree.refinement_pass = pass_num + 1
+
+        await _emit(progress, ProgressEvent(
+            tree_id=tree.id,
+            event_type="refinement_started",
+            message=f"Refinement pass {pass_num + 1}...",
+        ))
+
+        # Build claim summary for critique
+        all_claims = tree.all_claims()
+        claim_summary = "\n".join(
+            f"[{c.status.value}] (conf={c.confidence:.2f}) {c.content}"
+            for c in all_claims
+        )
+
+        # Self-critique
+        try:
+            result = await synthesis_client.complete(
+                messages=[
+                    {"role": "system", "content": REFINEMENT_SYSTEM},
+                    {"role": "user", "content": refinement_prompt(
+                        question, tree.synthesis, claim_summary,
+                    )},
+                ],
+                max_tokens=2048,
+                thinking=False,
+                temperature=0.3,
+            )
+            tree.llm_prompt_tokens += result.prompt_tokens
+            tree.llm_completion_tokens += result.completion_tokens
+            tree.llm_requests += 1
+
+            parsed = _parse_json(result.text)
+            if not isinstance(parsed, dict):
+                break
+
+            quality = float(parsed.get("quality_score", 0.8))
+            needs_more = parsed.get("needs_more_research", False)
+            follow_ups = parsed.get("follow_up_queries", [])
+
+            if not needs_more or quality >= 0.85 or not follow_ups:
+                log.info("Refinement pass %d: quality=%.2f, no more research needed", pass_num + 1, quality)
+                break
+
+            # Execute follow-up searches
+            for fup in follow_ups[:3]:  # max 3 follow-ups per pass
+                fup_question = fup.get("question", "")
+                fup_query = fup.get("search_query", fup_question)
+
+                if not fup_query:
+                    continue
+
+                await _emit(progress, ProgressEvent(
+                    tree_id=tree.id,
+                    event_type="refinement_search",
+                    message=f"Follow-up: {fup_question[:60]}...",
+                ))
+
+                # Create a refinement branch
+                root = tree.get_branch(tree.root_branch_id) if tree.root_branch_id else None
+                if root and root.depth + 1 < tree.max_depth:
+                    child = Branch(
+                        question=fup_question,
+                        branch_type=BranchType.DEEPENING,
+                        parent_branch_id=tree.root_branch_id,
+                        depth=1,
+                        max_iterations=2,
+                    )
+                    tree.add_branch(child)
+
+                    await _run_branch(
+                        tree=tree,
+                        branch=child,
+                        settings=settings,
+                        bulk_client=bulk_client,
+                        synthesis_client=synthesis_client,
+                        progress=progress,
+                        visited_urls=set(),
+                        seen_claims=set(),
+                        dedup=dedup,
+                    )
+
+            # Re-synthesize with new data
+            tree.synthesis = await _synthesize(
+                tree, question, synthesis_client, settings,
+            )
+
+        except Exception as e:
+            log.warning("Refinement pass %d failed: %s", pass_num + 1, e)
+            break
+
+
+# ══════════════════════════════════════════════════════════════════════
+# HiveMindDB Feedback Loop
+# ══════════════════════════════════════════════════════════════════════
+
+async def _store_to_hivemind(
+    tree: ResearchTree,
+    settings: Settings,
+    progress: ProgressCallback,
+) -> None:
+    """Store verified claims to HiveMindDB for future research."""
+    try:
+        from .storage.hivemind import HiveMindClient
+        from .storage.models import MemoryCreate, MemoryType
+
+        client = HiveMindClient(settings.hivemind_url)
+        verified_claims = [
+            c for c in tree.all_claims()
+            if c.status in (ClaimStatus.VERIFIED, ClaimStatus.ACCEPTED) and c.confidence >= 0.7
+        ]
+
+        if not verified_claims:
+            return
+
+        stored = 0
+        for claim in verified_claims[:50]:  # cap at 50 per tree
+            sources = ", ".join(claim.source_urls[:3])
+            memory = MemoryCreate(
+                content=f"{claim.content} [sources: {sources}]",
+                memory_type=MemoryType.FACT,
+                agent_id="dendrite",
+                tags=["dendrite", f"tree:{tree.id}", "verified"],
+                metadata={
+                    "tree_id": tree.id,
+                    "question": tree.question,
+                    "confidence": claim.confidence,
+                    "source_urls": claim.source_urls[:5],
+                    "status": claim.status.value,
+                },
+            )
+            result = await client.create_memory(memory)
+            if result:
+                stored += 1
+
+        await client.close()
+
+        if stored > 0:
+            await _emit(progress, ProgressEvent(
+                tree_id=tree.id,
+                event_type="hivemind_stored",
+                message=f"Stored {stored} verified claims to HiveMindDB",
+                data={"stored": stored},
+            ))
+
+        log.info("Stored %d/%d verified claims to HiveMindDB", stored, len(verified_claims))
+
+    except Exception as e:
+        log.warning("HiveMindDB feedback failed: %s", e)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -607,7 +952,7 @@ async def _synthesize(
     if not all_claims:
         return ""
 
-    # Build claims text with status
+    # Build claims text with status and source quality
     claims_text = "\n".join(
         f"[{c.status.value.upper()}] (confidence={c.confidence:.2f}) {c.content} "
         f"(sources: {', '.join(c.source_urls[:3])})"
@@ -641,7 +986,10 @@ def _build_tree_summary(tree: ResearchTree, branch_id: str, lines: list[str], in
         return
 
     prefix = "  " * indent
-    type_icon = {"investigation": "+", "verification": "?", "deepening": "v", "counter": "!"}
+    type_icon = {
+        "investigation": "+", "verification": "?", "deepening": "v",
+        "counter": "!", "resolution": "~",
+    }
     icon = type_icon.get(branch.branch_type.value, "-")
 
     lines.append(f"{prefix}{icon} {branch.question} [{len(branch.claims)} claims]")

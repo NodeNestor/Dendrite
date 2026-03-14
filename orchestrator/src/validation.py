@@ -126,8 +126,12 @@ async def _verify_claim(
         source_independent = parsed.get("source_independent", True)
         reason = parsed.get("reason", "")
 
+        # Score source quality for verification evidence
+        from .source_quality import score_source
+
         # Add verification evidence to the correct list based on verdict
         for page in good_pages:
+            sq = score_source(url=page.url, source_date=page.source_date, provider=page.provider)
             evidence = Evidence(
                 content=f"Verification: {reason}",
                 source_url=page.url,
@@ -135,16 +139,25 @@ async def _verify_claim(
                 provider="verification",
                 supports_claim=verdict in ("VERIFIED", "CONTESTED"),
                 confidence=confidence,
+                source_quality=sq.overall,
+                source_type=sq.source_type,
+                source_authority=sq.authority,
             )
             if verdict == "REFUTED":
                 claim.evidence_against.append(evidence)
             else:
                 claim.evidence_for.append(evidence)
 
-        # Update claim status
+        # Update claim status with Bayesian-inspired confidence update
+        old_status = claim.status
         if verdict == "VERIFIED" and source_independent:
             claim.status = ClaimStatus.VERIFIED
-            claim.confidence = max(claim.confidence, confidence)
+            # Bayesian update: independent verification from quality source = stronger boost
+            avg_quality = sum(
+                score_source(url=p.url, provider=p.provider).overall for p in good_pages
+            ) / len(good_pages)
+            boost = confidence * (0.3 if source_independent else 0.1) * avg_quality
+            claim.confidence = min(claim.confidence + boost, 1.0)
         elif verdict == "REFUTED":
             claim.status = ClaimStatus.REFUTED
             claim.confidence = min(claim.confidence, 1.0 - confidence)
@@ -152,6 +165,12 @@ async def _verify_claim(
             claim.status = ClaimStatus.CONTESTED
             claim.confidence = 0.5
         # INSUFFICIENT leaves it pending
+
+        from datetime import datetime, timezone
+        claim.updated_at = datetime.now(timezone.utc)
+        claim.status_history.append(
+            f"validation: {old_status.value} -> {claim.status.value} ({verdict}, conf={confidence:.2f})"
+        )
 
         log.info(
             "Verification result: %s (confidence=%.2f, independent=%s) — %.60s",

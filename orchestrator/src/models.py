@@ -25,6 +25,7 @@ class BranchType(str, Enum):
     VERIFICATION = "verification"
     DEEPENING = "deepening"
     COUNTER = "counter"
+    RESOLUTION = "resolution"  # contradiction resolution branch
 
 
 class ClaimStatus(str, Enum):
@@ -62,6 +63,10 @@ class Evidence(BaseModel):
     supports_claim: bool = True  # True=supports, False=contradicts
     confidence: float = 0.5
     discovered_at: datetime = Field(default_factory=_now)
+    # Source quality scoring
+    source_quality: float = 0.0  # 0.0-1.0 overall source quality
+    source_type: str = ""  # peer_reviewed, preprint, news, blog, etc.
+    source_authority: float = 0.0  # 0.0-1.0 domain authority
 
 
 # -- Claim ----------------------------------------------------------------
@@ -78,6 +83,8 @@ class Claim(BaseModel):
     verification_query: Optional[str] = None  # search query for verification branch
     deepening_question: Optional[str] = None  # sub-question for deepening branch
     created_at: datetime = Field(default_factory=_now)
+    updated_at: Optional[datetime] = None
+    status_history: list[str] = Field(default_factory=list)  # audit trail
 
     @property
     def independent_sources(self) -> int:
@@ -149,6 +156,9 @@ class ResearchTree(BaseModel):
 
     # Final output
     synthesis: str = ""
+
+    # Refinement tracking
+    refinement_pass: int = 0  # how many self-critique rounds completed
 
     def add_branch(self, branch: Branch) -> None:
         self.branches[branch.id] = branch

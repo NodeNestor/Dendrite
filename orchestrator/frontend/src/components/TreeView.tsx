@@ -22,6 +22,7 @@ const TYPE_COLORS: Record<string, { bg: string; border: string; text: string }> 
   verification: { bg: '#164e3e', border: '#059669', text: '#6ee7b7' },
   deepening: { bg: '#4a1d96', border: '#7c3aed', text: '#c4b5fd' },
   counter: { bg: '#7c2d12', border: '#ea580c', text: '#fdba74' },
+  resolution: { bg: '#701a3e', border: '#db2777', text: '#f9a8d4' },
 }
 
 function BranchNode({ data }: { data: any }) {

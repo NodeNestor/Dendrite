@@ -8,9 +8,39 @@ from dataclasses import dataclass, field
 
 from .llm.client import LLMClient
 from .llm.prompts import CONVERGENCE_SYSTEM, convergence_prompt
-from .models import Branch
+from .models import Branch, BranchType
 
 log = logging.getLogger(__name__)
+
+# Per-branch-type convergence thresholds
+_BRANCH_DEFAULTS: dict[BranchType, dict] = {
+    BranchType.INVESTIGATION: {
+        "min_iterations": 2,
+        "diminishing_threshold": 0.10,
+        "coverage_target": 0.85,
+    },
+    BranchType.VERIFICATION: {
+        "min_iterations": 1,
+        "diminishing_threshold": 0.15,
+        "coverage_target": 0.70,
+    },
+    BranchType.DEEPENING: {
+        "min_iterations": 2,
+        "diminishing_threshold": 0.10,
+        "coverage_target": 0.80,
+    },
+    BranchType.COUNTER: {
+        "min_iterations": 1,
+        "diminishing_threshold": 0.20,
+        "coverage_target": 0.65,
+    },
+    BranchType.RESOLUTION: {
+        "min_iterations": 1,
+        "diminishing_threshold": 0.20,
+        "coverage_target": 0.70,
+    },
+}
+
 
 @dataclass
 class ConvergenceResult:
@@ -32,7 +62,14 @@ async def check_convergence(
     """Decide whether a branch should continue or stop.
 
     Combines heuristics with optional LLM coverage assessment.
+    Uses per-branch-type thresholds when available.
     """
+    # Get branch-type specific defaults, fall back to provided args
+    bt_defaults = _BRANCH_DEFAULTS.get(branch.branch_type, {})
+    effective_min = bt_defaults.get("min_iterations", min_iterations)
+    effective_threshold = bt_defaults.get("diminishing_threshold", diminishing_returns_threshold)
+    effective_target = bt_defaults.get("coverage_target", coverage_target)
+
     # Hard cap
     if branch.iteration >= max_iterations:
         return ConvergenceResult(
@@ -41,11 +78,11 @@ async def check_convergence(
             coverage_score=0.8,
         )
 
-    # Min iterations
-    if branch.iteration < min_iterations:
+    # Min iterations (branch-type aware)
+    if branch.iteration < effective_min:
         return ConvergenceResult(
             converged=False,
-            reason=f"Below minimum iterations ({min_iterations})",
+            reason=f"Below minimum iterations ({effective_min}) for {branch.branch_type.value}",
         )
 
     # No claims at all
@@ -63,11 +100,11 @@ async def check_convergence(
             coverage_score=0.9,
         )
 
-    # Diminishing returns
+    # Diminishing returns (branch-type aware)
     total = len(branch.claims)
     if total > 0 and new_claims_this_iteration > 0:
         ratio = new_claims_this_iteration / total
-        if ratio < diminishing_returns_threshold:
+        if ratio < effective_threshold:
             return ConvergenceResult(
                 converged=True,
                 reason=f"Diminishing returns: {new_claims_this_iteration} new / {total} total ({ratio:.0%})",
@@ -94,10 +131,10 @@ async def check_convergence(
                 should_continue = parsed.get("should_continue", True)
                 gaps = parsed.get("gaps", [])
 
-                if not should_continue or coverage >= coverage_target:
+                if not should_continue or coverage >= effective_target:
                     return ConvergenceResult(
                         converged=True,
-                        reason=f"LLM assessment: coverage={coverage:.0%}",
+                        reason=f"LLM assessment: coverage={coverage:.0%} (target={effective_target:.0%} for {branch.branch_type.value})",
                         coverage_score=coverage,
                         gaps=gaps if isinstance(gaps, list) else [],
                     )

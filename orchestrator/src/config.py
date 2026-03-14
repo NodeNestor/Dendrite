@@ -73,6 +73,33 @@ class Settings(BaseSettings):
     diminishing_returns_threshold: float = 0.10  # new/total claims ratio to stop
     coverage_target: float = 0.85            # LLM coverage score to stop
 
+    # Academic providers
+    semantic_scholar_api_key: str = ""
+    enable_arxiv: bool = True
+    enable_semantic_scholar: bool = True
+
+    # Source quality
+    source_quality_weight: float = 0.3          # how much source quality affects claim confidence
+    recency_weight: float = 0.2                 # recency factor in source scoring
+
+    # Semantic deduplication
+    semantic_dedup_threshold: float = 0.55      # cosine similarity threshold for duplicate detection
+
+    # Fetch cache
+    fetch_cache_size: int = 500                 # max cached pages
+    fetch_cache_ttl: float = 3600.0             # cache TTL in seconds
+
+    # Contradiction resolution
+    enable_contradiction_resolution: bool = True
+    resolution_iterations: int = 2              # iterations for resolution branches
+
+    # Multi-turn refinement
+    enable_refinement: bool = True
+    max_refinement_passes: int = 1              # self-critique rounds after initial synthesis
+
+    # HiveMindDB feedback
+    enable_hivemind_feedback: bool = True       # store verified claims back to HiveMindDB
+
     # Optional API keys
     github_token: str = ""
 
@@ -117,6 +144,20 @@ _RUNTIME_FIELDS = {
     "max_concurrent_verifications", "verification_fetch_count",
     # Convergence
     "min_convergence_iterations", "diminishing_returns_threshold", "coverage_target",
+    # Academic providers
+    "semantic_scholar_api_key", "enable_arxiv", "enable_semantic_scholar",
+    # Source quality
+    "source_quality_weight", "recency_weight",
+    # Semantic deduplication
+    "semantic_dedup_threshold",
+    # Fetch cache
+    "fetch_cache_size", "fetch_cache_ttl",
+    # Contradiction resolution
+    "enable_contradiction_resolution", "resolution_iterations",
+    # Multi-turn refinement
+    "enable_refinement", "max_refinement_passes",
+    # HiveMindDB feedback
+    "enable_hivemind_feedback",
 }
 
 

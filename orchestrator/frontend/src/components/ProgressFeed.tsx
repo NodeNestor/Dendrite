@@ -16,7 +16,12 @@ const EVENT_COLORS: Record<string, string> = {
   claim_triaged: 'text-amber-400',
   branch_converged: 'text-zinc-400',
   validation_started: 'text-orange-400',
+  resolution_started: 'text-pink-400',
+  contradiction_resolved: 'text-pink-300',
   synthesis_started: 'text-pink-400',
+  refinement_started: 'text-cyan-400',
+  refinement_search: 'text-cyan-300',
+  hivemind_stored: 'text-indigo-400',
   tree_complete: 'text-emerald-400',
   tree_failed: 'text-red-400',
 }
